@@ -1,4 +1,4 @@
-name: Simple Security Scan
+name: Security Scan with JSON Report
 
 on:
   push:
@@ -16,23 +16,76 @@ jobs:
       run: |
         curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
 
-    - name: Scan for vulnerabilities and generate HTML
+    - name: Update Trivy database
       run: |
-        # Сканируем текущий репозиторий
-        trivy fs . --format template --template "@/usr/local/share/trivy/templates/html.tpl" --output security-report.html
-        trivy fs . --format json --output scan-results.json
+        trivy image --download-db-only
 
-    - name: Upload HTML report
+    - name: Run comprehensive security scan
+      run: |
+        # Полное сканирование в JSON формате
+        trivy fs . --format json --output security-scan-results.json --scanners vuln,secret,config --severity CRITICAL,HIGH,MEDIUM,LOW
+        
+        # Также делаем табличный вывод для логов
+        trivy fs . --format table --scanners vuln,secret,config --severity CRITICAL,HIGH,MEDIUM,LOW
+
+    - name: Analyze and display results summary
+      run: |
+        echo "=== SECURITY SCAN SUMMARY ==="
+        
+        if [ -f "security-scan-results.json" ]; then
+          # Устанавливаем jq для парсинга JSON
+          sudo apt-get install -y jq
+          
+          # Анализируем результаты
+          TOTAL_VULNS=$(jq '.Results | length' security-scan-results.json)
+          CRITICAL_COUNT=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' security-scan-results.json)
+          HIGH_COUNT=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity == "HIGH")] | length' security-scan-results.json)
+          MEDIUM_COUNT=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity == "MEDIUM")] | length' security-scan-results.json)
+          LOW_COUNT=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity == "LOW")] | length' security-scan-results.json)
+          SECRETS_COUNT=$(jq '[.Results[].Secrets[]?] | length' security-scan-results.json)
+          
+          echo "📊 Scan Results:"
+          echo "🛡️  Total targets scanned: $TOTAL_VULNS"
+          echo "🔴 CRITICAL vulnerabilities: $CRITICAL_COUNT"
+          echo "🟠 HIGH vulnerabilities: $HIGH_COUNT"
+          echo "🟡 MEDIUM vulnerabilities: $MEDIUM_COUNT"
+          echo "🟢 LOW vulnerabilities: $LOW_COUNT"
+          echo "🔑 Secrets found: $SECRETS_COUNT"
+          
+          # Показываем несколько примеров уязвимостей
+          if [ "$CRITICAL_COUNT" -gt 0 ] || [ "$HIGH_COUNT" -gt 0 ]; then
+            echo ""
+            echo "🚨 CRITICAL/HIGH VULNERABILITIES FOUND:"
+            jq -r '.Results[].Vulnerabilities[]? | select(.Severity == "CRITICAL" or .Severity == "HIGH") | "\(.Severity): \(.VulnerabilityID) - \(.Title)"' security-scan-results.json | head -10
+          fi
+          
+          if [ "$SECRETS_COUNT" -gt 0 ]; then
+            echo ""
+            echo "🔍 SECRETS FOUND:"
+            jq -r '.Results[].Secrets[]? | "SECRET: \(.Category) - \(.Title)"' security-scan-results.json | head -5
+          fi
+          
+        else
+          echo "❌ No scan results found"
+        fi
+
+    - name: Upload JSON report as artifact
       uses: actions/upload-artifact@v4
       with:
         name: security-scan-results
         path: |
-          security-report.html
-          scan-results.json
+          security-scan-results.json
         retention-days: 30
 
-    - name: Show completion message
+    - name: Check for critical vulnerabilities
+      if: always()
       run: |
-        echo "✅ Security scan completed!"
-        echo "📊 HTML report: security-report.html"
-        echo "📁 Download from GitHub Actions artifacts"
+        if [ -f "security-scan-results.json" ]; then
+          CRITICAL_COUNT=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' security-scan-results.json)
+          if [ "$CRITICAL_COUNT" -gt 0 ]; then
+            echo "::warning::Found $CRITICAL_COUNT CRITICAL vulnerabilities!"
+            exit 1
+          else
+            echo "✅ No CRITICAL vulnerabilities found"
+          fi
+        fi
