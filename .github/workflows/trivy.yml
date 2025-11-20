@@ -15,8 +15,7 @@ jobs:
           -v $PWD:/src \
           -w /src \
           aquasec/trivy:latest fs \
-          --format template \
-          --template "@contrib/html.tpl" \
+          --format html \
           --output trivy-report.html \
           .
     - name: Upload HTML report
