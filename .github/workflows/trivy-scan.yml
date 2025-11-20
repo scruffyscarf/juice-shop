@@ -14,13 +14,10 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '18'
-        
-    - name: Install dependencies (regular install)
-      run: npm install
+    - name: Install dependencies (skip tests)
+      run: |
+        npm install --ignore-scripts
+        cd frontend && npm install --ignore-scripts && cd ..
       
     - name: Run Trivy vulnerability scanner
       uses: aquasecurity/trivy-action@master
@@ -54,19 +51,10 @@ jobs:
         path: sbom.spdx.json
         retention-days: 30
         
-    - name: Trivy scan summary (table format)
+    - name: Run Trivy for console output
       uses: aquasecurity/trivy-action@master
       with:
         scan-type: 'fs'
         scan-ref: '.'
         format: 'table'
-        output: 'trivy-table.txt'
-        
-    - name: Display scan summary
-      run: |
-        echo "=== Trivy Scan Summary ==="
-        if [ -f trivy-table.txt ]; then
-          cat trivy-table.txt
-        else
-          echo "No vulnerabilities found or report not generated"
-        fi
+        exit-code: 0
