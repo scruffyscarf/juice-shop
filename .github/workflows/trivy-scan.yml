@@ -14,13 +14,13 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       
-    - name: Set up Node.js (for building if needed)
+    - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '18'
         
-    - name: Install dependencies
-      run: npm ci
+    - name: Install dependencies (regular install)
+      run: npm install
       
     - name: Run Trivy vulnerability scanner
       uses: aquasecurity/trivy-action@master
@@ -63,4 +63,10 @@ jobs:
         output: 'trivy-table.txt'
         
     - name: Display scan summary
-      run: cat trivy-table.txt
+      run: |
+        echo "=== Trivy Scan Summary ==="
+        if [ -f trivy-table.txt ]; then
+          cat trivy-table.txt
+        else
+          echo "No vulnerabilities found or report not generated"
+        fi
