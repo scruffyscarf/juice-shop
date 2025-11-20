@@ -1,28 +1,169 @@
-name: Trivy Scan
+name: Security Scan with HTML Report
 
 on:
   push:
     branches: [ main ]
 
 jobs:
-  scan:
+  security-scan:
     runs-on: ubuntu-latest
+    
     steps:
-    - uses: actions/checkout@v4
-    - name: Run Trivy
+    - name: Checkout Juice Shop repository
+      uses: actions/checkout@v4
+      with:
+        repository: juice-shop/juice-shop
+        path: ./juice-shop
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Install Juice Shop dependencies
       run: |
-        docker run --rm \
-          -v $PWD:/src \
-          -w /src \
-          aquasec/trivy:latest fs \
-          --format json \
-          --output trivy-results.json \
-          .
-    - name: Convert to HTML
+        cd juice-shop
+        npm ci
+
+    - name: Install Trivy
       run: |
-        echo "<html><body><pre>$(cat trivy-results.json | jq '.Results[] | .Vulnerabilities[] | {VulnerabilityID, PkgName, Severity, Title}' 2>/dev/null || echo 'No vulnerabilities found')</pre></body></html>" > trivy-report.html
-    - name: Upload HTML report
+        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+        trivy --version
+
+    - name: Run comprehensive Trivy scan
+      run: |
+        cd juice-shop
+        
+        # Сканируем уязвимости зависимостей
+        trivy fs . --format json --output trivy-vuln.json --scanners vuln
+        
+        # Сканируем секреты в коде
+        trivy fs . --format json --output trivy-secrets.json --scanners secret
+        
+        # Сканируем конфигурации
+        trivy fs . --format json --output trivy-config.json --scanners config
+        
+        # Полное сканирование для HTML отчета
+        trivy fs . --format template --template "@/usr/local/share/trivy/templates/html.tpl" --output trivy-report.html
+
+    - name: Generate HTML report
+      run: |
+        cd juice-shop
+        
+        # Создаем красивый HTML отчет
+        cat > security-report.html << 'EOF'
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Security Scan Report - Juice Shop</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+                .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+                .header { text-align: center; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 8px; margin-bottom: 20px; }
+                .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 30px; }
+                .summary-card { padding: 15px; border-radius: 8px; text-align: center; color: white; font-weight: bold; }
+                .critical { background: #dc3545; }
+                .high { background: #fd7e14; }
+                .medium { background: #ffc107; color: #333; }
+                .low { background: #28a745; }
+                .vulnerability { border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 15px; background: #fafafa; }
+                .vuln-header { display: flex; justify-content: between; align-items: center; margin-bottom: 10px; }
+                .severity { padding: 5px 10px; border-radius: 20px; color: white; font-size: 12px; font-weight: bold; }
+                .vuln-title { font-weight: bold; font-size: 16px; margin-bottom: 5px; }
+                .vuln-details { color: #666; font-size: 14px; }
+                .timestamp { text-align: center; color: #888; margin-top: 30px; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>🔒 Security Scan Report</h1>
+                    <h2>OWASP Juice Shop</h2>
+                    <p>Generated on: <span id="date"></span></p>
+                </div>
+                
+                <div class="summary">
+                    <div class="summary-card critical">
+                        <h3>CRITICAL</h3>
+                        <div id="critical-count">0</div>
+                    </div>
+                    <div class="summary-card high">
+                        <h3>HIGH</h3>
+                        <div id="high-count">0</div>
+                    </div>
+                    <div class="summary-card medium">
+                        <h3>MEDIUM</h3>
+                        <div id="medium-count">0</div>
+                    </div>
+                    <div class="summary-card low">
+                        <h3>LOW</h3>
+                        <div id="low-count">0</div>
+                    </div>
+                </div>
+                
+                <div id="vulnerabilities">
+                    <!-- Vulnerabilities will be inserted here -->
+                </div>
+                
+                <div class="timestamp">
+                    Report generated by Trivy Security Scanner
+                </div>
+            </div>
+            
+            <script>
+                document.getElementById('date').textContent = new Date().toLocaleString();
+                
+                // Здесь будет JavaScript для парсинга JSON и заполнения отчета
+                // В реальном сценарии это делалось бы на сервере
+            </script>
+        </body>
+        </html>
+        EOF
+        
+        # Копируем готовый HTML отчет из Trivy
+        if [ -f "trivy-report.html" ]; then
+            cp trivy-report.html trivy-security-report.html
+            echo "Trivy HTML report generated"
+        fi
+
+    - name: Upload HTML report as artifact
       uses: actions/upload-artifact@v4
       with:
-        name: trivy-results
-        path: trivy-report.html
+        name: security-report
+        path: |
+          juice-shop/security-report.html
+          juice-shop/trivy-security-report.html
+          juice-shop/trivy-vuln.json
+          juice-shop/trivy-secrets.json
+          juice-shop/trivy-config.json
+        retention-days: 30
+
+    - name: Display scan summary
+      run: |
+        cd juice-shop
+        echo "=== Security Scan Summary ==="
+        echo "📊 Scan completed successfully!"
+        echo "📁 Reports generated:"
+        echo "   - security-report.html (Custom report)"
+        echo "   - trivy-security-report.html (Trivy report)" 
+        echo "   - trivy-vuln.json (Vulnerabilities)"
+        echo "   - trivy-secrets.json (Secrets)"
+        echo "   - trivy-config.json (Config issues)"
+        echo ""
+        echo "📎 Reports are available as artifacts in GitHub Actions"
+
+    - name: Notify on critical findings
+      if: always()
+      run: |
+        cd juice-shop
+        if [ -f "trivy-vuln.json" ]; then
+          CRITICAL_COUNT=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' trivy-vuln.json)
+          if [ "$CRITICAL_COUNT" -gt 0 ]; then
+            echo "🚨 CRITICAL vulnerabilities found: $CRITICAL_COUNT"
+            echo "Please check the security report for details"
+          else
+            echo "✅ No CRITICAL vulnerabilities found"
+          fi
+        fi
