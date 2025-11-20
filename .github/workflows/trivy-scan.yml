@@ -1,60 +1,23 @@
-name: Trivy Security Scan
+name: Trivy Scan
 
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
 
 jobs:
-  security-scan:
+  scan:
     runs-on: ubuntu-latest
-    
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Install dependencies (skip tests)
-      run: |
-        npm install --ignore-scripts
-        cd frontend && npm install --ignore-scripts && cd ..
-      
-    - name: Run Trivy vulnerability scanner
+    - uses: actions/checkout@v4
+    - name: Run Trivy
       uses: aquasecurity/trivy-action@master
       with:
         scan-type: 'fs'
         scan-ref: '.'
-        format: 'template'
-        template: '@/contrib/html.tpl'
-        output: 'trivy-report.html'
-        severity: 'CRITICAL,HIGH,MEDIUM'
-        
-    - name: Generate SBOM with Trivy
-      uses: aquasecurity/trivy-action@master
-      with:
-        scan-type: 'fs'
-        scan-ref: '.'
-        format: 'spdx-json'
-        output: 'sbom.spdx.json'
-        
-    - name: Upload Trivy HTML report
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+    - name: Upload results
       uses: actions/upload-artifact@v4
       with:
-        name: trivy-security-report
-        path: trivy-report.html
-        retention-days: 30
-        
-    - name: Upload SBOM
-      uses: actions/upload-artifact@v4
-      with:
-        name: software-bill-of-materials
-        path: sbom.spdx.json
-        retention-days: 30
-        
-    - name: Run Trivy for console output
-      uses: aquasecurity/trivy-action@master
-      with:
-        scan-type: 'fs'
-        scan-ref: '.'
-        format: 'table'
-        exit-code: 0
+        name: trivy-results
+        path: trivy-results.sarif
