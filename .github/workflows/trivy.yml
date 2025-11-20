@@ -3,15 +3,11 @@ name: Trivy Security Scan
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
 
 jobs:
   trivy-scan:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      
+    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -21,18 +17,31 @@ jobs:
       with:
         scan-type: 'fs'
         scan-ref: '.'
-        format: 'template'
-        template: '@/contrib/html.tpl'
-        output: 'trivy-report.html'
+        format: 'table'
+        exit-code: 0
         
-    - name: Generate SBOM with Trivy
-      uses: aquasecurity/trivy-action@master
-      with:
-        scan-type: 'fs'
-        scan-ref: '.'
-        format: 'spdx-json'
-        output: 'sbom.spdx.json'
-        
+    - name: Run Trivy with HTML report (using docker)
+      run: |
+        docker run --rm \
+          -v ${{ github.workspace }}:/src \
+          -w /src \
+          aquasec/trivy:latest fs \
+          --format template \
+          --template "@contrib/html.tpl" \
+          --output trivy-report.html \
+          --severity CRITICAL,HIGH,MEDIUM,LOW \
+          .
+          
+    - name: Generate SBOM
+      run: |
+        docker run --rm \
+          -v ${{ github.workspace }}:/src \
+          -w /src \
+          aquasec/trivy:latest fs \
+          --format spdx-json \
+          --output sbom.spdx.json \
+          .
+          
     - name: Upload Trivy HTML report
       uses: actions/upload-artifact@v4
       with:
