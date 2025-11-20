@@ -1,148 +1,37 @@
-name: Trivy Security Scan with SBOM
+name: Simple Trivy Scan
 
 on:
   push:
     branches: [ main ]
 
 jobs:
-  trivy-scan:
+  security-scan:
     runs-on: ubuntu-latest
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
 
     - name: Install Trivy
       run: |
         curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
-        trivy --version
 
-    - name: Update Trivy database
+    - name: Generate SBOM and scan
       run: |
-        trivy image --download-db-only
-
-    - name: Generate SBOM
-      run: |
-        # Генерируем SBOM в формате CycloneDX
+        # Генерируем SBOM
         trivy fs . --format cyclonedx --output sbom.json
-        echo "SBOM generated successfully"
-
-    - name: Scan SBOM for vulnerabilities
-      run: |
-        # Сканируем сам SBOM на уязвимости
-        trivy sbom sbom.json --format json --output sbom-vulnerabilities.json
-        echo "SBOM vulnerability scan completed"
-
-    - name: Scan filesystem for vulnerabilities
-      run: |
-        # Полное сканирование файловой системы
-        trivy fs . \
-          --format json \
-          --output fs-vulnerabilities.json \
-          --scanners vuln \
-          --severity CRITICAL,HIGH,MEDIUM,LOW
-        echo "Filesystem vulnerability scan completed"
-
-    - name: Scan for secrets and config issues
-      run: |
-        # Дополнительное сканирование секретов и конфигов
-        trivy fs . \
-          --format json \
-          --output secrets-config.json \
-          --scanners secret,config \
-          --severity CRITICAL,HIGH,MEDIUM,LOW
-        echo "Secrets and config scan completed"
-
-    - name: Create comprehensive JSON report
-      run: |
-        # Устанавливаем jq для обработки JSON
-        sudo apt-get install -y jq
         
-        # Создаем сводный отчет
-        cat > comprehensive-security-report.json << 'EOF'
-        {
-          "scanMetadata": {
-            "scanner": "Trivy",
-            "version": "$(trivy --version | head -1 | cut -d' ' -f2)",
-            "timestamp": "$(date -Iseconds)",
-            "repository": "${{ github.repository }}",
-            "commit": "${{ github.sha }}",
-            "branch": "${{ github.ref_name }}"
-          },
-          "sbomAnalysis": {
-            "componentsCount": $(jq '.components | length' sbom.json 2>/dev/null || echo "0"),
-            "vulnerabilitiesFound": $(jq '.Results | length' sbom-vulnerabilities.json 2>/dev/null || echo "0")
-          },
-          "vulnerabilitySummary": {
-            "filesystemScan": {
-              "targetsScanned": $(jq '.Results | length' fs-vulnerabilities.json 2>/dev/null || echo "0"),
-              "vulnerabilitiesBySeverity": {
-                "CRITICAL": $(jq '[.Results[].Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' fs-vulnerabilities.json 2>/dev/null || echo "0"),
-                "HIGH": $(jq '[.Results[].Vulnerabilities[]? | select(.Severity == "HIGH")] | length' fs-vulnerabilities.json 2>/dev/null || echo "0"),
-                "MEDIUM": $(jq '[.Results[].Vulnerabilities[]? | select(.Severity == "MEDIUM")] | length' fs-vulnerabilities.json 2>/dev/null || echo "0"),
-                "LOW": $(jq '[.Results[].Vulnerabilities[]? | select(.Severity == "LOW")] | length' fs-vulnerabilities.json 2>/dev/null || echo "0")
-              }
-            },
-            "secretsScan": {
-              "secretsFound": $(jq '[.Results[].Secrets[]?] | length' secrets-config.json 2>/dev/null || echo "0")
-            }
-          },
-          "reportFiles": {
-            "sbom": "sbom.json",
-            "sbomVulnerabilities": "sbom-vulnerabilities.json",
-            "filesystemVulnerabilities": "fs-vulnerabilities.json",
-            "secretsConfig": "secrets-config.json"
-          }
-        }
-        EOF
+        # Сканируем SBOM на уязвимости
+        trivy sbom sbom.json --format json --output vulnerabilities.json
         
-        echo "Comprehensive JSON report generated"
+        # Сканируем файловую систему
+        trivy fs . --format json --output fs-scan.json
 
-    - name: Display scan summary
-      run: |
-        echo "=== TRIVY SECURITY SCAN SUMMARY ==="
-        echo "📊 Scan completed successfully!"
-        echo ""
-        echo "📁 Generated Reports:"
-        echo "  📋 SBOM: sbom.json"
-        echo "  🔍 SBOM Vulnerabilities: sbom-vulnerabilities.json"
-        echo "  🛡️ Filesystem Vulnerabilities: fs-vulnerabilities.json"
-        echo "  🔑 Secrets & Config: secrets-config.json"
-        echo "  📈 Summary: comprehensive-security-report.json"
-        echo ""
-        
-        # Показываем статистику
-        if [ -f "comprehensive-security-report.json" ]; then
-          echo "📈 Vulnerability Statistics:"
-          jq -r '.vulnerabilitySummary.filesystemScan.vulnerabilitiesBySeverity | "  CRITICAL: \(.CRITICAL)\n  HIGH: \(.HIGH)\n  MEDIUM: \(.MEDIUM)\n  LOW: \(.LOW)"' comprehensive-security-report.json
-          
-          SECRETS_COUNT=$(jq '.vulnerabilitySummary.secretsScan.secretsFound' comprehensive-security-report.json)
-          echo "  🔑 Secrets found: $SECRETS_COUNT"
-        fi
-
-    - name: Upload all JSON reports as artifacts
+    - name: Upload results
       uses: actions/upload-artifact@v4
       with:
-        name: trivy-security-reports
+        name: security-scan-results
         path: |
           sbom.json
-          sbom-vulnerabilities.json
-          fs-vulnerabilities.json
-          secrets-config.json
-          comprehensive-security-report.json
-        retention-days: 30
-
-    - name: Check for critical vulnerabilities
-      if: always()
-      run: |
-        if [ -f "comprehensive-security-report.json" ]; then
-          CRITICAL_COUNT=$(jq '.vulnerabilitySummary.filesystemScan.vulnerabilitiesBySeverity.CRITICAL' comprehensive-security-report.json)
-          if [ "$CRITICAL_COUNT" -gt 0 ]; then
-            echo "::warning::Found $CRITICAL_COUNT CRITICAL vulnerabilities!"
-            exit 1
-          else
-            echo "✅ No CRITICAL vulnerabilities found"
-          fi
-        fi
+          vulnerabilities.json
+          fs-scan.json
